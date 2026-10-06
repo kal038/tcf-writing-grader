@@ -81,7 +81,7 @@ def main() -> None:
         "-t",
         "--temperature",
         type=float,
-        default=0.0,
+        default=0.1,
         help="Sampling temperature (default: 0.0 for deterministic evaluation)",
     )
     parser.add_argument(

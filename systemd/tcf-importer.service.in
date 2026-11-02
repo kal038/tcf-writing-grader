@@ -1,0 +1,12 @@
+[Unit]
+Description=Local TCF learning-note importer
+
+[Service]
+Type=simple
+ExecStart=@EXECUTABLE@ --config @CONFIG@ watch
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

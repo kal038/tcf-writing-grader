@@ -54,7 +54,7 @@ def setup(path):
     from .core import publish
     with directory(path.absolute().parent, create=True) as parent:
         publish(parent, path.name, text.encode())
-    for key in ("inbox", "quarantine", "log_dir"):
+    for key in ("inbox", "quarantine", "processed", "log_dir"):
         with directory(cfg[key], create=True):
             pass
     print(f"Saved {path}. No service was enabled or started.")
@@ -118,6 +118,7 @@ def watch(cfg):
 def status(cfg):
     print(f"Vault: {cfg['vault']}")
     print(f"Inbox: {cfg['inbox']}")
+    print(f"Processed archive: {cfg['processed']}")
     print(f"Pending notes: {len(scan(cfg['inbox'])) if cfg['inbox'].exists() else 0}")
     try:
         result = subprocess.run(["systemctl", "--user", "is-active", "tcf-importer.service"],

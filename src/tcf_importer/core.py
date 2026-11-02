@@ -22,6 +22,7 @@ LOG = logging.getLogger("tcf_importer")
 DEFAULT_CONFIG = Path.home() / ".config/tcf-importer/config.toml"
 DEFAULTS = dict(inbox="~/Downloads/TCF-Inbox", vault="",
                 quarantine="~/Downloads/TCF-Inbox-Rejected",
+                processed="~/Downloads/TCF-Inbox-Processed",
                 log_dir="~/.local/state/tcf-importer", notifications=True,
                 poll_interval_seconds=30)
 SECTIONS = ("Reusable Vocabulary and Collocations", "Reusable Grammar",
@@ -115,7 +116,7 @@ def validate(data: bytes) -> dict:
 def load_config(path: Path) -> dict:
     with path.open("rb") as stream:
         cfg = DEFAULTS | tomllib.load(stream)
-    for key in ("inbox", "vault", "quarantine", "log_dir"):
+    for key in ("inbox", "vault", "quarantine", "processed", "log_dir"):
         if not isinstance(cfg[key], str) or not cfg[key].strip():
             raise ValueError(f"Configure {key} in {path}")
         cfg[key] = Path(cfg[key]).expanduser().absolute()
@@ -126,11 +127,11 @@ def load_config(path: Path) -> dict:
     interval = cfg["poll_interval_seconds"]
     if type(interval) not in (int, float) or not 0 < interval < float("inf"):
         raise ValueError("poll_interval_seconds must be positive and finite")
-    paths = [cfg[k].resolve() for k in ("inbox", "vault", "quarantine", "log_dir")]
+    paths = [cfg[k].resolve() for k in ("inbox", "vault", "quarantine", "processed", "log_dir")]
     for i, a in enumerate(paths):
         for b in paths[i + 1:]:
             if a == b or a in b.parents or b in a.parents:
-                raise ValueError("Inbox, vault, quarantine, and log_dir must not overlap")
+                raise ValueError("Inbox, vault, quarantine, processed, and log_dir must not overlap")
     return cfg
 
 
@@ -299,7 +300,7 @@ class Importer:
         source = source.expanduser().absolute()
         if not eligible(source):
             raise ValueError("Expected a visible, regular, non-symlink .md file")
-        for key in ("vault", "quarantine", "log_dir"):
+        for key in ("vault", "quarantine", "processed", "log_dir"):
             protected = self.cfg[key].resolve()
             if source.resolve() == protected or protected in source.resolve().parents:
                 raise ValueError(f"Source must not be inside {key}")
@@ -347,11 +348,37 @@ class Importer:
                             continue
                 record["state"] = "committed"
                 atomic_json(receipts, receipt_name, record)
+                archive = self.archive(source, original)
                 self.consume(source, original)
+        LOG.info("Archived %s to %s", source, archive)
         result = f"{'Already imported' if duplicate else 'Imported'}: {target}"
         LOG.info(result)
         notify(self.cfg, "TCF learning note", result)
         return result
+
+    def archive(self, source, original):
+        """Persist a success copy before deleting the source; reuse it on retry."""
+        target_dir = self.cfg["processed"]
+        data = original[0]
+        base = safe_name(source.name)
+        name, index = base, 1
+        with directory(target_dir, create=True) as dest:
+            while True:
+                target = target_dir / name
+                if self.matches(target, data):
+                    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dest)
+                    try:
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
+                    os.fsync(dest)
+                    return target
+                try:
+                    publish(dest, name, data)
+                    return target
+                except FileExistsError:
+                    name = f"{Path(base).stem}-{index}.md"
+                    index += 1
 
     def quarantine(self, source, original, reason):
         target_dir = self.cfg["quarantine"]

@@ -1,6 +1,7 @@
 inbox = "~/Downloads/TCF-Inbox"
 vault = "" # User supplies later
 quarantine = "~/Downloads/TCF-Inbox-Rejected"
+processed = "~/Downloads/TCF-Inbox-Processed"
 log_dir = "~/.local/state/tcf-importer"
 notifications = true
 poll_interval_seconds = 30

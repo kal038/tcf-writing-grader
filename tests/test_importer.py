@@ -19,7 +19,7 @@ def data():
 
 @pytest.fixture
 def cfg(tmp_path):
-    result = core.DEFAULTS | {key: tmp_path / key for key in ('inbox', 'vault', 'quarantine', 'log_dir')}
+    result = core.DEFAULTS | {key: tmp_path / key for key in ('inbox', 'vault', 'quarantine', 'processed', 'log_dir')}
     result['notifications'] = False
     for key in ('inbox', 'vault'):
         result[key].mkdir()
@@ -350,3 +350,70 @@ def test_install_script_with_mock_tools(tmp_path):
     calls = log.read_text()
     assert '--user daemon-reload' in calls
     assert 'enable' not in calls and 'start' not in calls
+
+
+def test_success_archived(cfg, data):
+    path = source(cfg, data)
+    core.Importer(cfg).process(path, delay=0)
+    assert not path.exists()
+    assert (cfg['processed'] / 'lesson.md').read_bytes() == data
+    assert notes(cfg)[0].read_bytes() == data
+    assert scan(cfg['inbox']) == []
+    with pytest.raises(ValueError, match='inside processed'):
+        core.Importer(cfg).process(cfg['processed'] / 'lesson.md', delay=0)
+
+
+def test_archive_collisions_and_retry(cfg, data):
+    importer = core.Importer(cfg)
+    importer.process(source(cfg, data), delay=0)
+    second = data + b'\nA different attempt'
+    importer.process(source(cfg, second), delay=0)
+    importer.process(source(cfg, second), delay=0)
+    assert (cfg['processed'] / 'lesson.md').read_bytes() == data
+    assert (cfg['processed'] / 'lesson-1.md').read_bytes() == second
+    assert len(list(cfg['processed'].glob('*.md'))) == 2
+    assert len(notes(cfg)) == 2
+
+
+@pytest.mark.parametrize('after_publish', [False, True])
+def test_archive_failure_retains_source_and_recovers(cfg, data, after_publish):
+    path = source(cfg, data)
+    importer = core.Importer(cfg)
+    archive = importer.archive
+    def fail(*args):
+        if after_publish:
+            archive(*args)
+        raise OSError('archive interrupted')
+    with patch.object(importer, 'archive', side_effect=fail), pytest.raises(OSError):
+        importer.process(path, delay=0)
+    assert path.exists()
+    assert len(notes(cfg)) == 1
+    core.Importer(cfg).process(path, delay=0)
+    assert not path.exists()
+    assert len(notes(cfg)) == 1
+    assert len(list(cfg['processed'].glob('*.md'))) == 1
+
+
+def test_archive_symlink_refused(cfg, data, tmp_path):
+    external = tmp_path / 'external'
+    external.mkdir()
+    cfg['processed'].symlink_to(external, target_is_directory=True)
+    path = source(cfg, data)
+    with pytest.raises(OSError):
+        core.Importer(cfg).process(path, delay=0)
+    assert path.exists()
+    assert not list(external.iterdir())
+
+
+def test_processed_config_backward_compatibility(cfg, tmp_path):
+    path = tmp_path / 'old-config.toml'
+    path.write_text('\n'.join(f'{k} = {json.dumps(str(v) if isinstance(v, Path) else v)}' for k, v in cfg.items() if k != 'processed'))
+    assert core.load_config(path)['processed'] == Path('~/Downloads/TCF-Inbox-Processed').expanduser()
+
+
+def test_processed_config_overlap(cfg, tmp_path):
+    cfg['processed'] = cfg['inbox'] / 'success'
+    path = tmp_path / 'bad-config.toml'
+    path.write_text('\n'.join(f'{k} = {json.dumps(str(v) if isinstance(v, Path) else v)}' for k, v in cfg.items()))
+    with pytest.raises(ValueError, match='overlap'):
+        core.load_config(path)

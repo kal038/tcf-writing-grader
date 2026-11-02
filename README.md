@@ -18,7 +18,7 @@ python3 -m venv .venv
 Setup asks for your **existing** Obsidian vault directory. It never creates a
 vault, imports notes, or enables a service. It saves
 `~/.config/tcf-importer/config.toml` and creates the configured inbox, quarantine,
-and state directories. An existing configuration is validated and preserved;
+processed archive, and state directories. An existing configuration is validated and preserved;
 edit it directly to change settings. `config.example.toml` lists all defaults.
 The vault path is intentionally blank until you supply it.
 
@@ -40,14 +40,23 @@ or vault while using different state directories.
 
 `validate` does not require configuration. `dry-run` requires an existing configured
 vault but writes nothing; its proposed filename is advisory until import.
-`import` consumes its source after persistence, including files outside the inbox;
-never point it at a sample you intend to retain. Files inside the vault, quarantine,
+`import` archives its source after vault persistence, including files outside the inbox;
+never point it at a sample you intend to retain. Files inside the vault, quarantine, processed archive,
 or state directory are refused as sources. Exit codes: 0 success, 1 invalid note,
 2 operational/configuration error, 130 keyboard interruption.
 
 Valid notes go to `TCF Canada/Writing/Learnings/Task-1/` (or Task-2/Task-3).
 Safe filenames are preserved; unsafe characters are replaced, long names are
 shortened, and collisions receive numbered suffixes. Nothing is overwritten.
+Successful imports move out of the inbox into `~/Downloads/TCF-Inbox-Processed/`
+after the vault copy is durable. Set `processed` in configuration to change this
+location. This folder is never watched, and manual imports from it are refused.
+Existing configurations automatically use the default without needing an edit.
+Archive filenames are preserved when safe; collisions receive numbered suffixes.
+Retries reuse a matching archive copy. If archiving fails, the inbox file stays
+in place and the next retry completes without duplicating the vault note.
+Previously consumed notes are not retroactively archived.
+
 Invalid stable notes go to quarantine with a `.reason.json` diagnostic. Correct
 the rejected note and save a new copy into the inbox to retry.
 
@@ -95,11 +104,11 @@ Copies are staged and fsynced inside the destination directory, then published
 with a no-overwrite hard link and directory fsync. Inbox and vault can be on
 different filesystems. The destination filesystem must support hard links and
 file/directory fsync; unsupported or full filesystems leave the source in place.
-No source-to-vault rename is used. Persistence precedes source deletion.
+No source-to-vault rename is used. Both vault and processed-archive persistence precede source deletion.
 
 Atomic JSON receipts under `log_dir/receipts` record pending and committed
 transactions. A matching destination recovers a crash after publication but
-before source deletion. Receipts deduplicate identical bytes across filenames;
+before archiving or source deletion. Receipts deduplicate identical bytes across filenames;
 a missing or edited destination is not treated as a duplicate. Preserve receipts
 if you want this history retained. Do not manually move/edit published notes
 while an import is in progress. Process locks coordinate instances sharing state.
